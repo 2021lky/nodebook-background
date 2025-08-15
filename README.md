@@ -28,10 +28,10 @@ npm install
 
 ### 2. 配置环境变量
 
-复制 `.env` 文件并根据需要修改配置：
+复制 `.env.example` 文件并根据需要修改配置：
 
 ```bash
-cp .env .env.local
+cp .env.example .env
 ```
 配置数据库连接
 - 数据库主机：DB_HOST
