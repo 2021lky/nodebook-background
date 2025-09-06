@@ -17,22 +17,18 @@ class FileSystemController {
       
       // 如果是根目录查询且没有任何文件或文件夹，创建默认文件夹
       if (!parentId && fileTree.length === 0) {
-        console.log('📁 No files or folders found, creating default folders');
-        
         // 创建默认文件夹
         const defaultFolders = [
           { name: '默认文件夹', description: '系统创建默认文件夹' }
         ];
-        
+        // 添加到数据库中
         for (const folderInfo of defaultFolders) {
           try {
             await FileSystemModel.createFolder(userId, folderInfo.name, null);
-            console.log(`✅ Created default folder: ${folderInfo.name}`);
           } catch (folderError) {
             console.warn(`⚠️ Failed to create default folder ${folderInfo.name}:`, folderError.message);
           }
         }
-        
         // 重新获取文件树
         fileTree = await FileSystemModel.getUserFileTree(userId, parentId || null);
       }

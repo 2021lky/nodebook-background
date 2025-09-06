@@ -3,7 +3,8 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
+remote/
+storage/
 # 环境变量文件
 .env
 .env.local

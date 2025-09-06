@@ -102,7 +102,7 @@ class AuthController {
   static async verifyToken(req, res) {
     try {
       const token = req.headers.authorization?.replace('Bearer ', '');
-      
+      console.log(token)
       if (!token) {
         return res.status(401).json(errorResponse('未提供访问令牌'));
       }
@@ -141,18 +141,15 @@ class AuthController {
   // 刷新token
   static async refreshToken(req, res) {
     try {
-      console.log('=== Refresh Token Request ===');
-      console.log('Request body:', req.body);
-      console.log('Request headers:', JSON.stringify(req.headers, null, 2));
-      
       const { refreshToken } = req.body;
       
+      console.log('=== Refresh Token Request ===');
+      console.log('Request body:', refreshToken);
+
       if (!refreshToken) {
         console.log('❌ No refresh token provided');
-        return res.status(401).json(errorResponse('未提供refresh token'));
+        return res.status(403).json(errorResponse('无权限访问，请先登录'));
       }
-
-      console.log('🔍 Refresh token received:', refreshToken.substring(0, 20) + '...');
 
       // 验证refresh token
       const decoded = JWTUtils.verifyRefreshToken(refreshToken);
@@ -162,33 +159,24 @@ class AuthController {
       const tokenRecord = await UserModel.verifyRefreshToken(refreshToken);
       if (!tokenRecord) {
         console.log('❌ Refresh token not found in database');
-        return res.status(401).json(errorResponse('无效的refresh token'));
+        return res.status(403).json(errorResponse('无效的refresh token，请先登录'));
       }
-
-      console.log('✅ Refresh token found in database:', { id: tokenRecord.id, userId: tokenRecord.user_id });
-
       // 获取用户信息
       const user = await UserModel.getUserById(decoded.userId);
       if (!user) {
         console.log('❌ User not found for userId:', decoded.userId);
-        return res.status(401).json(errorResponse('用户不存在'));
+        return res.status(404).json(errorResponse('用户不存在'));
       }
-
-      console.log('✅ User found:', { id: user.id, email: user.email });
-
       // 生成新的token对
       const { accessToken, refreshToken: newRefreshToken } = JWTUtils.generateTokenPair(user);
-      console.log('✅ New tokens generated');
-      
+
       // 删除旧的refresh token
       await UserModel.deleteRefreshToken(refreshToken);
-      console.log('✅ Old refresh token deleted');
       
       // 保存新的refresh token
       const refreshTokenExpiration = JWTUtils.calculateRefreshTokenExpiration();
       const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
       await UserModel.saveRefreshToken(user.id, newRefreshToken, refreshTokenExpiration, deviceInfo);
-      console.log('✅ New refresh token saved');
 
       res.json(successResponse({
         accessToken,
@@ -205,10 +193,10 @@ class AuthController {
       console.log('Error stack:', error.stack);
       
       if (error.name === 'JsonWebTokenError') {
-        return res.status(401).json(errorResponse('无效的refresh token'));
+        return res.status(403).json(errorResponse('无效的refresh token'));
       }
       if (error.name === 'TokenExpiredError') {
-        return res.status(401).json(errorResponse('Refresh token已过期', 'REFRESH_TOKEN_EXPIRED'));
+        return res.status(403).json(errorResponse('Refresh token已过期', 'REFRESH_TOKEN_EXPIRED'));
       }
       res.status(500).json(errorResponse('Token刷新失败', error.message));
     }
