@@ -389,64 +389,84 @@ class DailyTaskController {
       if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return res.status(400).json(errorResponse('日期格式不正确，请使用YYYY-MM-DD格式'));
       }
-
-      if (!Array.isArray(data) || data.length === 0) {
-        return res.status(400).json(errorResponse('数据列表不能为空'));
+      if (!Array.isArray(data)) {
+        return res.status(400).json(errorResponse('数据列表必须为数组'));
+      }
+      if (data.length === 0) {
+        // 空数组即删除该日期所有任务
+        const deletedCount = await DailyTaskModel.deleteTasksByDate(userId, date);
+        return res.json(successResponse({ created: [], updated: 0, deleted: deletedCount, date }, '已清空该日期的任务'));
+      }
+      if (data.length > 6) {
+        return res.status(400).json(errorResponse('每日最多只能设定6个学习任务'));
       }
 
-      // 验证数据结构
-      const invalidItem = data.find(item => 
-        !item || typeof item !== 'object' || 
-        (item.title && (typeof item.title !== 'string' || item.title.trim().length === 0 || item.title.trim().length > 255)) ||
-        (item.completed !== undefined && typeof item.completed !== 'boolean' && item.completed !== 0 && item.completed !== 1)
+      // 校验数据结构：有 id 的可以只更新 completed/title；无 id 的必须有合法 title
+      const invalidItem = data.find(item =>
+        !item || typeof item !== 'object' ||
+        (item.title !== undefined && (typeof item.title !== 'string' || item.title.trim().length === 0 || item.title.trim().length > 255)) ||
+        (item.completed !== undefined && typeof item.completed !== 'boolean' && item.completed !== 0 && item.completed !== 1) ||
+        (!item.id && (typeof item.title !== 'string' || item.title.trim().length === 0 || item.title.trim().length > 255))
       );
-      
       if (invalidItem !== undefined) {
-        return res.status(400).json(errorResponse('数据格式不正确：title必须为1-255个字符的字符串，completed必须为布尔值或0/1'));
+        return res.status(400).json(errorResponse('数据格式不正确：无 id 的项必须提供1-255字符的 title；completed 必须为布尔值或0/1'));
       }
 
-      // 分离创建和更新的数据
-      const createItems = data.filter(item => !item.id);
-      const updateItems = data.filter(item => item.id);
+      // 读取该日期现有任务，校验请求里带 id 的任务必须属于该日期
+      const currentTasks = await DailyTaskModel.getUserDailyTasks(userId, date);
+      const currentMap = new Map(currentTasks.map(t => [t.id, t]));
+      const incomingIds = new Set(data.filter(i => !!i.id).map(i => i.id));
 
-      const results = {
-        created: [],
-        updated: 0,
-        date
-      };
-
-      // 执行批量创建
-      if (createItems.length > 0) {
-        const titles = createItems.map(item => item.title);
-        const createdTasks = await DailyTaskModel.batchCreateTasks(userId, titles, date);
-        results.created = createdTasks;
+      const invalidIds = [...incomingIds].filter(id => !currentMap.has(id));
+      if (invalidIds.length > 0) {
+        return res.status(400).json(errorResponse(`存在不属于该日期的任务ID: ${invalidIds.join(', ')}`));
       }
 
-      // 执行批量更新
+      // 计算需要删除的任务：现有集合 - 请求集合
+      const toDeleteIds = currentTasks
+        .map(t => t.id)
+        .filter(id => !incomingIds.has(id));
+
+      // 先更新请求中带 id 的任务
+      let updatedCount = 0;
+      const updateItems = data.filter(i => !!i.id);
       if (updateItems.length > 0) {
         const updatePromises = updateItems.map(async (item) => {
           const updates = {};
           if (item.title !== undefined) updates.title = item.title.trim();
           if (item.completed !== undefined) updates.completed = item.completed ? 1 : 0;
-          
-          if (Object.keys(updates).length > 0) {
-            return await DailyTaskModel.updateTask(item.id, userId, updates);
-          }
-          return null;
-        });
 
+          if (Object.keys(updates).length === 0) return null;
+          await DailyTaskModel.updateTask(item.id, userId, updates);
+          return true;
+        });
         const updateResults = await Promise.all(updatePromises);
-        results.updated = updateResults.filter(result => result !== null).length;
+        updatedCount = updateResults.filter(Boolean).length;
       }
 
-      const message = createItems.length > 0 && updateItems.length > 0 
-        ? '批量创建和更新任务成功' 
-        : createItems.length > 0 
-          ? '批量创建任务成功' 
-          : '批量更新任务成功';
+      // 再删除不在请求里的旧任务
+      let deletedCount = 0;
+      if (toDeleteIds.length > 0) {
+        const deletePromises = toDeleteIds.map(id => DailyTaskModel.deleteTask(id, userId).then(ok => ok ? 1 : 0));
+        const deleteResults = await Promise.all(deletePromises);
+        deletedCount = deleteResults.reduce((a, b) => a + b, 0);
+      }
 
-      const statusCode = createItems.length > 0 ? 201 : 200;
-      return res.status(statusCode).json(successResponse(results, message));
+      // 最后创建没有 id 的新任务（批量）
+      let createdTasks = [];
+      const createItems = data.filter(i => !i.id);
+      if (createItems.length > 0) {
+        const titles = createItems.map(i => i.title.trim());
+        createdTasks = await DailyTaskModel.batchCreateTasks(userId, titles, date);
+      }
+
+      const results = {
+        created: createdTasks,
+        updated: updatedCount,
+        deleted: deletedCount,
+        date
+      };
+      return res.json(successResponse(results, '已全量替换指定日期的任务'));
     } catch (error) {
       console.error('统一批量接口失败:', error);
       if (typeof error.message === 'string' && error.message.includes('每日最多只能设定6个学习任务')) {
