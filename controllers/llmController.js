@@ -12,27 +12,41 @@ class LLMController {
       const { messages, model = 'Qwen/Qwen2.5-7B-Instruct' } = req.body;
       const userId = req.user?.userId || 'anonymous';
       const abortController = new AbortController();
-
-      // 将 activeRequests 的值统一为对象，便于 stop 正确中止与清理
+  
+      // 将活动请求存为对象，便于 stop 使用
       LLMController.activeRequests.set(requestId, {
         abortController,
         response: res,
         userId
       });
-
-      // 设置流式响应头
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Transfer-Encoding', 'chunked');
-
+  
+      // 更符合 SSE 的头
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+  
+      let finished = false;
+      const safeWrite = (chunk) => {
+        if (finished || res.writableEnded) return;
+        try { res.write(chunk); } catch (_) {}
+      };
+      const safeEnd = () => {
+        if (finished) return;
+        finished = true;
+        try { if (!res.writableEnded) res.end(); } catch (_) {}
+        LLMController.activeRequests.delete(requestId);
+      };
+  
       // 客户端断开时清理
       res.on('close', () => {
-        LLMController.activeRequests.delete(requestId);
+        try { abortController.abort(); } catch (_) {}
+        safeEnd();
       });
-
+  
       // 发送请求ID
-      res.write(`data: ${JSON.stringify({ type: 'start', requestId })}\n\n`);
-
-      // 导入 fetch
+      safeWrite(`data: ${JSON.stringify({ type: 'start', requestId })}\n\n`);
+  
+      // 导入 fetch 并发起请求
       const fetch = (await import('node-fetch')).default;
       const response = await fetch(config.llm.baseUrl, {
         method: 'POST',
@@ -47,51 +61,60 @@ class LLMController {
         }),
         signal: abortController.signal
       });
-
+  
       if (!response.ok) {
-        res.write(`error: ${JSON.stringify({ error: 'API调用失败' })}\n\n`);
-        res.end();
-        LLMController.activeRequests.delete(requestId);
+        safeWrite(`error: ${JSON.stringify({ error: 'API调用失败' })}\n\n`);
+        safeEnd();
         return;
       }
-
-      // 处理流式数据
-      response.body.on('data', (chunk) => {
-        const decoded = typeof chunk === 'string'
-          ? chunk
-          : (Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
-
+  
+      // 处理流式数据（使用安全写入）
+      const onData = (chunk) => {
+        if (finished || res.writableEnded) return;
+        const decoded = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
         const lines = decoded.split('\n');
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data.trim() === '[DONE]') {
-              res.write('data: [DONE]\n\n');
-              res.end();
-              LLMController.activeRequests.delete(requestId);
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') {
+              safeWrite('data: [DONE]\n\n');
+              safeEnd();
               return;
             }
-            res.write(`${line}\n\n`);
+            safeWrite(`${line}\n\n`);
           } else if (line.startsWith('error: ')) {
-            res.write(`${line}\n\n`);
+            safeWrite(`${line}\n\n`);
           }
         }
-      });
-
-      response.body.on('end', () => {
-        res.end();
-        LLMController.activeRequests.delete(requestId);
-      });
-
-      response.body.on('error', (error) => {
-        res.write(`error: ${JSON.stringify({ error: '流处理错误', details: error.message })}\n\n`);
-        res.end();
-        LLMController.activeRequests.delete(requestId);
-      });
-
+      };
+  
+      const onEnd = () => {
+        safeEnd();
+      };
+  
+      const onError = (error) => {
+        // AbortError 多由 stop/客户端断开引起，避免写入已结束响应
+        if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
+          // 可降级日志
+          // console.debug('Stream aborted:', requestId);
+          safeEnd();
+          return;
+        }
+        safeWrite(`error: ${JSON.stringify({ error: '流处理错误', details: error.message })}\n\n`);
+        safeEnd();
+      };
+  
+      response.body.on('data', onData);
+      response.body.on('end', onEnd);
+      response.body.on('error', onError);
+  
     } catch (error) {
-      res.write(`data: ${JSON.stringify({ error: '请求失败', details: error.message })}\n\n`);
-      res.end();
+      // 捕获同步/初始化阶段错误
+      try {
+        const msg = { error: '请求失败', details: error.message };
+        res.writableEnded ? null : res.write(`data: ${JSON.stringify(msg)}\n\n`);
+      } catch (_) {}
+      try { res.writableEnded ? null : res.end(); } catch (_) {}
       LLMController.activeRequests.delete(requestId);
     }
   }
