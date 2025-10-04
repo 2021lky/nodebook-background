@@ -80,4 +80,9 @@ router.put('/move/:nodeId',
 // 删除文件或文件夹
 router.delete('/:nodeId', FileSystemController.deleteNode);
 
+// 保存工作流
+router.post('/workflow/:dirId', authenticateToken, FileSystemController.saveWorkflow);
+// 获取工作流
+router.get('/workflow/:dirId', authenticateToken, FileSystemController.getWorkflow);
+
 module.exports = router;

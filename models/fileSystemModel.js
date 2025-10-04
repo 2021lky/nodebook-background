@@ -46,11 +46,11 @@ class FileSystemModel {
   static async saveFileContent(userId, fileId, content) {
     this.ensureStorageDir(userId);
     const filePath = this.getFilePath(userId, fileId);
-    
+
     // 使用gzip压缩存储
     const compressed = zlib.gzipSync(content, { level: 6 });
     fs.writeFileSync(filePath, compressed);
-    
+
     return filePath;
   }
 
@@ -63,16 +63,16 @@ class FileSystemModel {
     if (!fs.existsSync(filePath)) {
       throw new Error('文件不存在');
     }
-    
+
     try {
       // 读取文件内容
       const fileData = fs.readFileSync(filePath);
-      
+
       // 检查文件是否为空
       if (fileData.length === 0) {
         return '';
       }
-      
+
       // 检查是否为gzip格式（前两个字节应该是0x1f, 0x8b）
       if (fileData.length >= 2 && fileData[0] === 0x1f && fileData[1] === 0x8b) {
         // 是gzip格式，进行解压缩
@@ -107,7 +107,7 @@ class FileSystemModel {
   static async getUserFileTree(userId, parentId = null) {
     try {
       console.log('📁 Getting file tree for user:', userId, 'parent:', parentId);
-      
+
       const sql = `
         SELECT id, name, type, path, size, mime_type, created_at, updated_at,
                CASE WHEN type = 'file' THEN 1 ELSE 0 END as isLeaf
@@ -115,10 +115,10 @@ class FileSystemModel {
         WHERE user_id = ? AND parent_id ${parentId ? '= ?' : 'IS NULL'} AND is_deleted = 0
         ORDER BY type ASC, name ASC
       `;
-      
+
       const params = parentId ? [userId, parentId] : [userId];
       const results = await query(sql, params);
-      
+
       // 递归获取子节点
       const treeData = [];
       for (const node of results) {
@@ -133,15 +133,15 @@ class FileSystemModel {
           createdAt: node.created_at,
           updatedAt: node.updated_at
         };
-        
+
         // 如果是文件夹，递归获取子节点
         if (node.type === 'folder') {
           treeNode.children = await this.getUserFileTree(userId, node.id);
         }
-        
+
         treeData.push(treeNode);
       }
-      
+
       console.log(`✅ Found ${treeData.length} nodes`);
       return treeData;
     } catch (error) {
@@ -160,7 +160,7 @@ class FileSystemModel {
   static async createFolder(userId, name, parentId = null) {
     try {
       console.log('📁 Creating folder:', { userId, name, parentId });
-      
+
       // 检查同级目录下是否已存在同名文件夹
       const existsQuery = `
         SELECT id FROM file_nodes 
@@ -169,11 +169,11 @@ class FileSystemModel {
       `;
       const existsParams = parentId ? [userId, parentId, name] : [userId, name];
       const existing = await query(existsQuery, existsParams);
-      
+
       if (existing.length > 0) {
         throw new Error('同级目录下已存在同名文件或文件夹');
       }
-      
+
       // 构建路径
       let path = name;
       if (parentId) {
@@ -186,15 +186,15 @@ class FileSystemModel {
         }
         path = `${parentResult[0].path}/${name}`;
       }
-      
+
       const folderId = uuidv4();
       const insertQuery = `
         INSERT INTO file_nodes (id, user_id, parent_id, name, type, path, size)
         VALUES (?, ?, ?, ?, 'folder', ?, 0)
       `;
-      
+
       await query(insertQuery, [folderId, userId, parentId, name, path]);
-      
+
       console.log('✅ Folder created successfully:', folderId);
       return {
         id: folderId,
@@ -222,7 +222,7 @@ class FileSystemModel {
   static async createFile(userId, name, content = '', parentId = null, mimeType = 'text/plain') {
     try {
       console.log('📄 Creating file:', { userId, name, parentId, mimeType });
-      
+
       // 检查同级目录下是否已存在同名文件
       const existsQuery = `
         SELECT id FROM file_nodes 
@@ -231,11 +231,11 @@ class FileSystemModel {
       `;
       const existsParams = parentId ? [userId, parentId, name] : [userId, name];
       const existing = await query(existsQuery, existsParams);
-      
+
       if (existing.length > 0) {
         throw new Error('同级目录下已存在同名文件或文件夹');
       }
-      
+
       // 构建路径
       let nodePath = name;
       if (parentId) {
@@ -248,21 +248,21 @@ class FileSystemModel {
         }
         nodePath = `${parentResult[0].path}/${name}`;
       }
-      
+
       const fileId = uuidv4();
       const size = Buffer.byteLength(content, 'utf8');
       const fileHash = this.calculateFileHash(content);
-      
+
       // 保存文件内容到文件系统
       const filePath = await this.saveFileContent(userId, fileId, content);
-      
+
       const insertQuery = `
         INSERT INTO file_nodes (id, user_id, parent_id, name, type, path, size, file_path, file_hash, mime_type)
         VALUES (?, ?, ?, ?, 'file', ?, ?, ?, ?, ?)
       `;
-      
+
       await query(insertQuery, [fileId, userId, parentId, name, nodePath, size, filePath, fileHash, mimeType]);
-      
+
       console.log('✅ File created successfully:', fileId);
       return {
         id: fileId,
@@ -290,51 +290,51 @@ class FileSystemModel {
   static async renameNode(userId, nodeId, newName) {
     try {
       console.log('✏️ Renaming node:', { userId, nodeId, newName });
-      
+
       // 获取当前节点信息
-        const currentNode = await query(
-          'SELECT name, path, parent_id FROM file_nodes WHERE id = ? AND user_id = ? AND is_deleted = 0',
-          [nodeId, userId]
-        );
-      
+      const currentNode = await query(
+        'SELECT name, path, parent_id FROM file_nodes WHERE id = ? AND user_id = ? AND is_deleted = 0',
+        [nodeId, userId]
+      );
+
       if (currentNode.length === 0) {
         throw new Error('文件或文件夹不存在');
       }
-      
+
       const node = currentNode[0];
-      
+
       // 检查同级目录下是否已存在同名文件
       const existsQuery = `
         SELECT id FROM file_nodes 
         WHERE user_id = ? AND parent_id ${node.parent_id ? '= ?' : 'IS NULL'} 
         AND name = ? AND id != ? AND is_deleted = 0
       `;
-      const existsParams = node.parent_id 
-        ? [userId, node.parent_id, newName, nodeId] 
+      const existsParams = node.parent_id
+        ? [userId, node.parent_id, newName, nodeId]
         : [userId, newName, nodeId];
       const existing = await query(existsQuery, existsParams);
-      
+
       if (existing.length > 0) {
         throw new Error('同级目录下已存在同名文件或文件夹');
       }
-      
+
       // 构建新路径
       const oldPath = node.path;
       const pathParts = oldPath.split('/');
       pathParts[pathParts.length - 1] = newName;
       const newPath = pathParts.join('/');
-      
+
       // 更新节点
-        await query(
-          'UPDATE file_nodes SET name = ?, path = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
-          [newName, newPath, nodeId, userId]
-        );
-      
+      await query(
+        'UPDATE file_nodes SET name = ?, path = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
+        [newName, newPath, nodeId, userId]
+      );
+
       // 如果是文件夹，需要更新所有子节点的路径
       if (node.type === 'folder') {
         await this.updateChildrenPaths(userId, nodeId, oldPath, newPath);
       }
-      
+
       console.log('✅ Node renamed successfully');
       return {
         id: nodeId,
@@ -357,20 +357,20 @@ class FileSystemModel {
   static async deleteNode(userId, nodeId) {
     try {
       console.log('🗑️ Deleting node:', { userId, nodeId });
-      
+
       // 检查节点是否存在
       const node = await query(
         'SELECT type FROM file_nodes WHERE id = ? AND user_id = ? AND is_deleted = 0',
         [nodeId, userId]
       );
-      
+
       if (node.length === 0) {
         throw new Error('文件或文件夹不存在');
       }
-      
+
       // 软删除节点（包括所有子节点）
       await this.softDeleteNodeRecursive(userId, nodeId);
-      
+
       console.log('✅ Node deleted successfully');
       return true;
     } catch (error) {
@@ -388,7 +388,7 @@ class FileSystemModel {
   static async getFileContent(userId, fileId) {
     try {
       console.log('📖 Getting file content:', { userId, fileId });
-      
+
       // 首先尝试新格式（file_path字段）
       const result = await query(
         `SELECT id, name, file_path, size, mime_type, path, created_at, updated_at 
@@ -396,16 +396,16 @@ class FileSystemModel {
          WHERE id = ? AND user_id = ? AND type = 'file' AND is_deleted = 0`,
         [fileId, userId]
       );
-      
+
       if (result.length === 0) {
         throw new Error('文件不存在');
       }
-      
+
       const fileInfo = result[0];
-      
+
       // 从文件系统读取内容
       const content = await this.readFileContent(fileInfo.file_path);
-      
+
       console.log('✅ File content retrieved');
       return {
         ...fileInfo,
@@ -427,24 +427,24 @@ class FileSystemModel {
   static async updateFileContent(userId, fileId, content) {
     try {
       console.log('💾 Updating file content:', { userId, fileId });
-      
+
       // 首先检查文件是否存在
       const fileResult = await query(
         `SELECT file_path FROM file_nodes 
          WHERE id = ? AND user_id = ? AND type = 'file' AND is_deleted = 0`,
         [fileId, userId]
       );
-      
+
       if (fileResult.length === 0) {
         throw new Error('文件不存在');
       }
-      
+
       const size = Buffer.byteLength(content, 'utf8');
       const fileHash = this.calculateFileHash(content);
-      
+
       // 更新文件系统中的内容
       await this.saveFileContent(userId, fileId, content);
-      
+
       // 更新数据库记录
       const result = await query(
         `UPDATE file_nodes 
@@ -452,11 +452,11 @@ class FileSystemModel {
          WHERE id = ? AND user_id = ? AND type = 'file' AND is_deleted = 0`,
         [size, fileHash, fileId, userId]
       );
-      
+
       if (result.affectedRows === 0) {
         throw new Error('文件更新失败');
       }
-      
+
       console.log('✅ File content updated');
       return { id: fileId, size, updatedAt: new Date() };
     } catch (error) {
@@ -472,15 +472,15 @@ class FileSystemModel {
         'SELECT id, path, type FROM file_nodes WHERE parent_id = ? AND user_id = ? AND is_deleted = 0',
         [parentId, userId]
       );
-      
+
       for (const child of children) {
         const newChildPath = child.path.replace(oldParentPath, newParentPath);
-        
+
         await query(
           'UPDATE file_nodes SET path = ? WHERE id = ? AND user_id = ?',
           [newChildPath, child.id, userId]
         );
-        
+
         // 如果子节点是文件夹，递归更新其子节点
         if (child.type === 'folder') {
           await this.updateChildrenPaths(userId, child.id, child.path, newChildPath);
@@ -505,18 +505,18 @@ class FileSystemModel {
          WHERE id = ? AND user_id = ? AND type = 'file' AND is_deleted = 0`,
         [fileId, userId]
       );
-      
+
       if (legacyResult.length === 0 || !legacyResult[0].content) {
         throw new Error('旧格式文件不存在或内容为空');
       }
-      
+
       const content = legacyResult[0].content;
       const fileHash = this.calculateFileHash(content);
       const filePath = this.getFilePath(userId, fileId);
-      
+
       // 保存内容到文件系统
       await this.saveFileContent(userId, fileId, content);
-      
+
       // 更新数据库记录，添加file_path和file_hash，移除content
       await query(
         `UPDATE file_nodes 
@@ -524,7 +524,7 @@ class FileSystemModel {
          WHERE id = ? AND user_id = ?`,
         [filePath, fileHash, fileId, userId]
       );
-      
+
       console.log('✅ Legacy file migrated successfully:', fileId);
     } catch (error) {
       console.error('❌ Error migrating legacy file:', error);
@@ -540,17 +540,17 @@ class FileSystemModel {
         'SELECT id FROM file_nodes WHERE parent_id = ? AND user_id = ? AND is_deleted = 0',
         [nodeId, userId]
       );
-      
+
       for (const child of children) {
         await this.softDeleteNodeRecursive(userId, child.id);
       }
-      
+
       // 获取当前节点信息，如果是文件则删除文件系统中的文件
       const nodeInfo = await query(
         'SELECT type, file_path FROM file_nodes WHERE id = ? AND user_id = ? AND is_deleted = 0',
         [nodeId, userId]
       );
-      
+
       if (nodeInfo.length > 0 && nodeInfo[0].type === 'file' && nodeInfo[0].file_path) {
         try {
           // 删除文件系统中的文件
@@ -563,7 +563,7 @@ class FileSystemModel {
           // 继续执行数据库删除，即使物理文件删除失败
         }
       }
-      
+
       // 软删除当前节点
       await query(
         'UPDATE file_nodes SET is_deleted = 1 WHERE id = ? AND user_id = ?',
@@ -571,6 +571,53 @@ class FileSystemModel {
       );
     } catch (error) {
       console.error('❌ Error in recursive soft delete:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 根据ID获取节点
+   * @param {string} nodeId - 节点ID
+   * @param {string} userId - 用户ID
+   * @returns {Promise<object|null>} - 节点信息
+   */
+  static async getNodeById(nodeId, userId) {
+    try {
+      const result = await query(
+        'SELECT * FROM file_nodes WHERE id = ? AND user_id = ? AND is_deleted = 0',
+        [nodeId, userId]
+      );
+      return result.length > 0 ? result[0] : null;
+    } catch (error) {
+      console.error('获取节点失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 根据ID更新节点
+   * @param {string} nodeId - 节点ID
+   * @param {string} userId - 用户ID
+   * @param {object} updateData - 要更新的数据
+   * @returns {Promise<object>} - 更新结果
+   */
+  static async updateNodeById(nodeId, userId, updateData) {
+    try {
+      // 构建SET部分的SQL语句
+      const setClause = Object.keys(updateData)
+        .map(key => `${key} = ?`)
+        .join(', ');
+      
+      // 构建完整的SQL语句
+      const sql = `UPDATE file_nodes SET ${setClause} WHERE id = ? AND user_id = ? AND is_deleted = 0`;
+      
+      // 构建参数数组，先是所有updateData的值，然后是nodeId和userId
+      const params = [...Object.values(updateData), nodeId, userId];
+      
+      const result = await query(sql, params);
+      return result;
+    } catch (error) {
+      console.error('更新节点失败:', error);
       throw error;
     }
   }

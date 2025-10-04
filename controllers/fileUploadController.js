@@ -90,6 +90,8 @@ class FileUploadController {
           return res.status(400).json({ message: '未上传文件' });
         }
 
+        const userId = req.user.userId;
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
         const fileInfo = {
           id: uuidv4(),
           originalName: file.originalname,
@@ -98,6 +100,7 @@ class FileUploadController {
           size: file.size,
           mimetype: file.mimetype,
           uploadTime: new Date().toISOString(),
+          url: `${baseUrl}/remote/${userId}/${file.filename}`,
         };
 
         res.status(200).json({

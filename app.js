@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const bodyParser = require('body-parser');
+const path = require('path'); // 添加 path 模块
 require('dotenv').config();
 
 const { testConnection } = require('./config/database');
@@ -19,6 +20,9 @@ app.use(cors({
 app.use(morgan('combined')); // 日志中间件
 app.use(bodyParser.json()); // JSON解析中间件
 app.use(bodyParser.urlencoded({ extended: true })); // URL编码解析中间件
+
+// 配置静态资源路径，使上传的文件可以通过HTTP访问
+app.use('/remote', express.static(path.join(process.cwd(), 'remote')));
 
 // 路由配置
 const apiRoutes = require('./routes/api');

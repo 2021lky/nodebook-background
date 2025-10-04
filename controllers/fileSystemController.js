@@ -300,6 +300,87 @@ class FileSystemController {
       res.status(500).json(errorResponse('获取统计信息失败', error.message));
     }
   }
+
+  /**
+ * 保存工作流/脑图数据
+ * POST /filesystem/workflow/:dirId
+ */
+static async saveWorkflow(req, res) {
+  try {
+    const { dirId } = req.params;
+    const { nodes, edges } = req.body;
+    const userId = req.user.userId;
+
+    // 验证目录是否存在且属于当前用户
+    const directory = await FileSystemModel.getNodeById(dirId, userId);
+    if (!directory) {
+      return res.status(404).json(errorResponse('目录不存在'));
+    }
+    
+    if (directory.type !== 'folder') {
+      return res.status(400).json(errorResponse('指定的ID不是目录'));
+    }
+
+    // 更新目录的nodes和edges字段
+    await FileSystemModel.updateNodeById(dirId, userId, {
+      nodes: JSON.stringify(nodes),
+      edges: JSON.stringify(edges)
+    });
+
+    return res.status(200).json(successResponse('脑图保存成功', { dirId }));
+  } catch (error) {
+    console.error('保存脑图失败:', error);
+    return res.status(500).json(errorResponse('保存脑图失败: ' + error.message));
+  }
+}
+
+/**
+ * 获取工作流/脑图数据
+ * GET /filesystem/workflow/:dirId
+ */
+static async getWorkflow(req, res) {
+  try {
+    const { dirId } = req.params;
+    const userId = req.user.userId;
+
+    // 验证目录是否存在且属于当前用户
+    const directory = await FileSystemModel.getNodeById(dirId, userId);
+    if (!directory) {
+      return res.status(404).json(errorResponse('目录不存在'));
+    }
+    
+    if (directory.type !== 'folder') {
+      return res.status(400).json(errorResponse('指定的ID不是目录'));
+    }
+
+    // 安全地解析JSON或返回空数组
+    let nodes = [];
+    let edges = [];
+    
+    if (directory.nodes) {
+      try {
+        // 如果已经是对象，直接使用；如果是字符串，尝试解析
+        nodes = typeof directory.nodes === 'object' ? directory.nodes : JSON.parse(directory.nodes);
+      } catch (e) {
+        console.warn('解析nodes失败，使用空数组:', e);
+      }
+    }
+    
+    if (directory.edges) {
+      try {
+        // 如果已经是对象，直接使用；如果是字符串，尝试解析
+        edges = typeof directory.edges === 'object' ? directory.edges : JSON.parse(directory.edges);
+      } catch (e) {
+        console.warn('解析edges失败，使用空数组:', e);
+      }
+    }
+
+    return res.status(200).json(successResponse('获取脑图成功', { nodes, edges }));
+  } catch (error) {
+    console.error('获取脑图失败:', error);
+    return res.status(500).json(errorResponse('获取脑图失败: ' + error.message));
+  }
+}
 }
 
 module.exports = FileSystemController;
